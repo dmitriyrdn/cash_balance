@@ -16,6 +16,7 @@ android {
         targetSdk = 35
         versionCode = 2
         versionName = "2.0"
+        manifestPlaceholders["appLabel"] = "Cash Balance"
     }
 
     buildTypes {
@@ -25,6 +26,13 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             // ponytail: personal app, signed with the debug key so the APK installs directly; add a real keystore before publishing
             signingConfig = signingConfigs.getByName("debug")
+        }
+        create("preview") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".preview"
+            versionNameSuffix = "-preview"
+            manifestPlaceholders["appLabel"] = "Cash Balance Preview"
+            matchingFallbacks += listOf("release")
         }
     }
 
