@@ -170,6 +170,7 @@ fun withoutIcon(name: String) = name.removePrefix(iconOf(name).orEmpty()).trim()
 @Composable
 fun App() {
     val d = Store.data
+    val csvExport = rememberCsvExport(d)
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -237,7 +238,7 @@ fun App() {
                     0 -> History(d, loading, activeHistoryAccount, onFilter = { historyAccount = it }, onRefresh = ::refresh, onOpen = { editing = it })
                     1 -> Balances(d, onRepay = { p, c -> new(Type.REPAY, p, c) })
                     2 -> Analytics(d, onOpen = { editing = it })
-                    else -> Settings(d, loading, onRefresh = ::refresh)
+                    else -> Settings(d, loading, onRefresh = ::refresh, csvExport = csvExport)
                 }
             }
             AnimatedVisibility(fabOpen && tab < 2, enter = fadeIn(), exit = fadeOut()) {
@@ -502,7 +503,7 @@ fun Balances(d: Data, onRepay: (String, String) -> Unit) {
 }
 
 @Composable
-fun Settings(d: Data, loading: Boolean, onRefresh: () -> Unit) {
+fun Settings(d: Data, loading: Boolean, onRefresh: () -> Unit, csvExport: CsvExport) {
     var account by remember { mutableStateOf<Account?>(null) }
     var category by remember { mutableStateOf<Category?>(null) }
     var basePicker by remember { mutableStateOf(false) }
@@ -565,6 +566,15 @@ fun Settings(d: Data, loading: Boolean, onRefresh: () -> Unit) {
             Text(
                 "Everything is stored only on this phone. Online rates are used for totals only — your exchanges keep the rate you actually got.",
                 Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        item { SectionTitle("Export") }
+        item {
+            ListItem(
+                headlineContent = { Text(if (csvExport.inProgress) "Exporting CSV…" else "Export CSV") },
+                supportingContent = { Text("All transactions, including hidden accounts. Choose where to save the file.") },
+                trailingContent = { if (csvExport.inProgress) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) },
+                modifier = Modifier.clickable(enabled = !csvExport.inProgress, onClick = csvExport.launch),
             )
         }
     }

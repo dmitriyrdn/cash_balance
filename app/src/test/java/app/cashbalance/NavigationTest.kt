@@ -1,10 +1,14 @@
 package app.cashbalance
 
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedDispatcher
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -12,7 +16,11 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowToast
+import java.io.File
+import java.io.StringWriter
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.ZoneId
@@ -20,7 +28,7 @@ import java.time.ZoneId
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class NavigationTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     private lateinit var backDispatcher: OnBackPressedDispatcher
 
     @Before fun start() {
@@ -103,5 +111,50 @@ class NavigationTest {
         compose.onNodeWithText("Safe · Expense 39").assertIsDisplayed()
         compose.runOnIdle { backDispatcher.onBackPressed() }
         compose.onNodeWithText("By category").assertExists()
+    }
+
+    @Test fun settingsExportsCsvToChosenDocument() {
+        compose.onNodeWithText("Settings").performClick()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Export CSV"))
+        compose.onNodeWithText("Export CSV").performClick()
+        val activity = shadowOf(compose.activity)
+        val request = activity.nextStartedActivityForResult
+        assertEquals(Intent.ACTION_CREATE_DOCUMENT, request.intent.action)
+        assertEquals("text/csv", request.intent.type)
+        assertEquals("cash-balance-${LocalDate.now()}.csv", request.intent.getStringExtra(Intent.EXTRA_TITLE))
+        val file = File(compose.activity.cacheDir, "ledger.csv")
+        compose.runOnIdle {
+            activity.receiveResult(request.intent, Activity.RESULT_OK, Intent().setData(Uri.fromFile(file)))
+        }
+        compose.waitUntil(10_000) { compose.runOnIdle { ShadowToast.getTextOfLatestToast() == "CSV exported" } }
+        assertEquals(StringWriter().also { Store.data.writeCsv(it) }.toString(), file.readText(Charsets.UTF_8))
+        compose.onNodeWithText("Export CSV").assertExists()
+    }
+
+    @Test fun cancellingCsvPickerLeavesSettingsReady() {
+        compose.onNodeWithText("Settings").performClick()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Export CSV"))
+        compose.onNodeWithText("Export CSV").performClick()
+        val activity = shadowOf(compose.activity)
+        val request = activity.nextStartedActivityForResult
+        compose.runOnIdle { activity.receiveResult(request.intent, Activity.RESULT_CANCELED, null) }
+        compose.onNodeWithText("Export CSV").assertExists()
+        assertEquals(null, ShadowToast.getTextOfLatestToast())
+        assertEquals(81, Store.data.txs.size)
+    }
+
+    @Test fun failedCsvWriteReportsFailureWithoutChangingLedger() {
+        compose.onNodeWithText("Settings").performClick()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Export CSV"))
+        compose.onNodeWithText("Export CSV").performClick()
+        val activity = shadowOf(compose.activity)
+        val request = activity.nextStartedActivityForResult
+        // A directory cannot be opened as an output file.
+        compose.runOnIdle {
+            activity.receiveResult(request.intent, Activity.RESULT_OK, Intent().setData(Uri.fromFile(compose.activity.cacheDir)))
+        }
+        compose.waitUntil(10_000) { compose.runOnIdle { ShadowToast.getTextOfLatestToast() == "Couldn't export CSV. Please try again." } }
+        compose.onNodeWithText("Export CSV").assertExists()
+        assertEquals(81, Store.data.txs.size)
     }
 }
