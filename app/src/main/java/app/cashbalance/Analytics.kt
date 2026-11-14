@@ -2,8 +2,12 @@
 
 package app.cashbalance
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -13,6 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,33 +30,65 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
-fun Analytics(d: Data) {
+fun Analytics(d: Data, onOpen: (Tx) -> Unit) {
     val cs = MaterialTheme.colorScheme
-    var month by remember { mutableStateOf<YearMonth?>(YearMonth.now()) }
-    val inPeriod = d.shownTxs().filter { t -> month.let { it == null || YearMonth.from(t.localDate()) == it } }
+    // Save a string because YearMonth is not a Bundle-supported value.
+    var savedMonth by rememberSaveable { mutableStateOf<String?>(YearMonth.now().toString()) }
+    val month = savedMonth?.let(YearMonth::parse)
+    var accountId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val filter = accountId?.takeIf { id -> d.visible.any { it.id == id } }
+    LaunchedEffect(filter) { accountId = filter }
+    var categoryId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val overviewScroll = rememberScrollState()
+    val categoryScroll = key(categoryId, filter, savedMonth) { rememberLazyListState() }
+    val periodLabel = month?.format(DateTimeFormatter.ofPattern("LLLL yyyy", Locale.ENGLISH)) ?: "All time"
+    val inPeriod = d.filteredTxs(accountId = filter, month = month)
     val spends = inPeriod.filter { it.type == Type.SPEND }
     fun base(t: Tx) = d.toBase(t.amount, t.currency) ?: 0.0
     val byCategory = spends.groupBy { it.category }
         .map { (c, ts) -> c to ts.groupBy { it.account }.mapValues { (_, l) -> l.sumOf(::base) } }
         .sortedByDescending { it.second.values.sum() }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    BackHandler(enabled = categoryId != null) { categoryId = null }
+    categoryId?.let { selected ->
+        val transactions = d.filteredTxs(filter, month, selected)
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { categoryId = null }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Back to analytics") }
+                Column(Modifier.weight(1f).padding(vertical = 12.dp)) {
+                    Text(d.categories.find { it.id == selected }?.name ?: "No category", style = MaterialTheme.typography.titleLarge)
+                    Text(periodLabel, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
+                }
+            }
+            AccountFilter(d.visible, filter, { accountId = it }, Modifier.padding(horizontal = 16.dp))
+            LazyColumn(Modifier.weight(1f), state = categoryScroll, contentPadding = PaddingValues(bottom = 24.dp)) {
+                if (transactions.isEmpty()) item {
+                    Text("No spending in this category for this account and period", Modifier.fillMaxWidth().padding(24.dp), textAlign = TextAlign.Center, color = cs.onSurfaceVariant)
+                }
+                transactionDays(d, transactions, filter, onOpen)
+            }
+        }
+        return
+    }
+
+    Column(Modifier.fillMaxSize().verticalScroll(overviewScroll).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { month = (month ?: YearMonth.now()).minusMonths(1) }) {
+            IconButton(onClick = { savedMonth = (month ?: YearMonth.now()).minusMonths(1).toString() }) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous")
             }
             Text(
-                month?.format(DateTimeFormatter.ofPattern("LLLL yyyy", Locale.ENGLISH)) ?: "All time",
+                periodLabel,
                 Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.titleMedium,
             )
-            IconButton(onClick = { month = (month ?: YearMonth.now()).plusMonths(1) }) {
+            IconButton(onClick = { savedMonth = (month ?: YearMonth.now()).plusMonths(1).toString() }) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next")
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = month == YearMonth.now(), onClick = { month = YearMonth.now() }, label = { Text("This month") })
-            FilterChip(selected = month == null, onClick = { month = null }, label = { Text("All time") })
+            FilterChip(selected = month == YearMonth.now(), onClick = { savedMonth = YearMonth.now().toString() }, label = { Text("This month") })
+            FilterChip(selected = month == null, onClick = { savedMonth = null }, label = { Text("All time") })
         }
+        AccountFilter(d.visible, filter, { accountId = it })
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Stat("Spent, ${d.base}", money(spends.sumOf(::base)), cs.onSurface, Modifier.weight(1f))
@@ -67,7 +104,7 @@ fun Analytics(d: Data) {
             val max = byCategory.first().second.values.sum().coerceAtLeast(0.01)
             byCategory.forEach { (catId, split) ->
                 val total = split.values.sum()
-                Column {
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { categoryId = catId }.padding(vertical = 8.dp)) {
                     Row {
                         Text(catNames[catId] ?: "No category", Modifier.weight(1f))
                         Text(money(total), fontWeight = FontWeight.SemiBold)
@@ -81,6 +118,21 @@ fun Analytics(d: Data) {
 
         ExchangeRates(d, inPeriod)
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun AccountFilter(accounts: List<Account>, selected: Long?, onSelect: (Long?) -> Unit, modifier: Modifier = Modifier) {
+    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(selected = selected == null, onClick = { onSelect(null) }, label = { Text("All accounts") })
+        accounts.forEach { account ->
+            FilterChip(
+                selected = selected == account.id,
+                onClick = { onSelect(if (selected == account.id) null else account.id) },
+                label = { Text(account.name) },
+                leadingIcon = { Dot(account.color) },
+            )
+        }
     }
 }
 

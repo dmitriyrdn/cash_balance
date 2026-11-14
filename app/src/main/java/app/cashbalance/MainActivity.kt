@@ -21,7 +21,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -34,6 +36,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,9 +60,7 @@ import java.math.BigDecimal
 import java.math.MathContext
 import java.net.HttpURLConnection
 import java.net.URL
-import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Currency
 import java.util.Locale
@@ -153,8 +154,6 @@ fun Data.sumBase(m: Map<String, BigDecimal>) = m.entries.sumOf { toBase(it.value
 /** Currencies this ledger has ever touched, base first. */
 fun Data.knownCurrencies() = (listOf(base) + txs.flatMap { listOf(it.currency, it.toCurrency) }).filter { it.length == 3 }.distinct()
 
-fun Tx.localDate(): LocalDate = Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).toLocalDate()
-
 fun dayLabel(d: LocalDate): String {
     val today = LocalDate.now()
     return when (d) {
@@ -174,6 +173,11 @@ fun App() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var historyAccount by rememberSaveable { mutableStateOf<Long?>(null) }
+    val screenState = rememberSaveableStateHolder()
+    // The editor removes the tab from composition. Keep its filters and scroll state here.
+    val activeHistoryAccount = historyAccount?.takeIf { id -> d.visible.any { it.id == id } }
+    LaunchedEffect(activeHistoryAccount) { historyAccount = activeHistoryAccount }
     var editing by remember { mutableStateOf<Tx?>(null) }
     var fabOpen by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
@@ -207,8 +211,7 @@ fun App() {
     }
 
     fun new(type: Type, person: String = "", currency: String = "") {
-        val acc = d.visible.firstOrNull { it.currency == currency } ?: d.visible.first()
-        editing = Tx(0, System.currentTimeMillis(), type, acc.id, acc.currency, BigDecimal.ZERO, person = person)
+        editing = d.newEntry(type, if (tab == 0) activeHistoryAccount else null, person, currency)
     }
 
     Scaffold(
@@ -229,11 +232,13 @@ fun App() {
         },
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
-            when (tab) {
-                0 -> History(d, loading, onRefresh = ::refresh, onOpen = { editing = it })
-                1 -> Balances(d, onRepay = { p, c -> new(Type.REPAY, p, c) })
-                2 -> Analytics(d)
-                else -> Settings(d, loading, onRefresh = ::refresh)
+            screenState.SaveableStateProvider(tab) {
+                when (tab) {
+                    0 -> History(d, loading, activeHistoryAccount, onFilter = { historyAccount = it }, onRefresh = ::refresh, onOpen = { editing = it })
+                    1 -> Balances(d, onRepay = { p, c -> new(Type.REPAY, p, c) })
+                    2 -> Analytics(d, onOpen = { editing = it })
+                    else -> Settings(d, loading, onRefresh = ::refresh)
+                }
             }
             AnimatedVisibility(fabOpen && tab < 2, enter = fadeIn(), exit = fadeOut()) {
                 Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable { fabOpen = false })
@@ -305,21 +310,18 @@ fun Avatar(colors: List<Color>, icon: String) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun History(d: Data, loading: Boolean, onRefresh: () -> Unit, onOpen: (Tx) -> Unit) {
+fun History(d: Data, loading: Boolean, filter: Long?, onFilter: (Long?) -> Unit, onRefresh: () -> Unit, onOpen: (Tx) -> Unit) {
     val cs = MaterialTheme.colorScheme
-    var filter by rememberSaveable { mutableStateOf<Long?>(null) }
+    val listState = rememberLazyListState()
     val bal = remember(d.txs) { d.balances() }
     val loans = remember(d.txs) { d.loans() }
     val shownBal = d.visible.mapNotNull { bal[it.id] }
     val cash = shownBal.sumOf { d.sumBase(it) }
     val lent = loans.values.sumOf { d.sumBase(it) }
     val missing = (shownBal + loans.values).flatMap { it.keys }.filter { d.toBase(BigDecimal.ONE, it) == null }.distinct()
-    val list = d.shownTxs()
-        .filter { t -> filter.let { it == null || it == t.account || it == t.toAccount } }
-        .sortedWith(compareByDescending<Tx> { it.time }.thenByDescending { it.id })
-    val days = list.groupBy { it.localDate() }
+    val list = d.filteredTxs(accountId = filter)
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 96.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 96.dp)) {
         item {
             Column(
                 Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(28.dp))
@@ -349,7 +351,7 @@ fun History(d: Data, loading: Boolean, onRefresh: () -> Unit, onOpen: (Tx) -> Un
                             Modifier.clip(RoundedCornerShape(50))
                                 .background(Color(a.color).copy(alpha = if (sel) 0.45f else 0.16f))
                                 .border(1.dp, if (sel) Color(a.color) else Color.Transparent, RoundedCornerShape(50))
-                                .clickable { filter = if (sel) null else a.id }
+                                .clickable { onFilter(if (sel) null else a.id) }
                                 .padding(horizontal = 12.dp, vertical = 7.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -366,16 +368,22 @@ fun History(d: Data, loading: Boolean, onRefresh: () -> Unit, onOpen: (Tx) -> Un
         if (list.isEmpty()) item {
             Text("No transactions yet — tap +", Modifier.fillMaxWidth().padding(32.dp), color = cs.onSurfaceVariant, textAlign = TextAlign.Center)
         }
-        days.forEach { (day, txs) ->
-            item(key = "d$day") {
-                val spent = txs.filter { it.type == Type.SPEND }.sumOf { d.toBase(it.amount, it.currency) ?: 0.0 }
-                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)) {
-                    Text(dayLabel(day), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
-                    if (spent > 0) Text("${money(-spent)} ${d.base}", style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
-                }
+        transactionDays(d, list, filter, onOpen)
+    }
+}
+
+/** Shared history/category rows, including stable keys for scroll restoration after edits. */
+fun LazyListScope.transactionDays(d: Data, list: List<Tx>, filter: Long?, onOpen: (Tx) -> Unit) {
+    list.groupBy { it.localDate() }.forEach { (day, txs) ->
+        item(key = "d$day") {
+            val cs = MaterialTheme.colorScheme
+            val spent = txs.filter { it.type == Type.SPEND }.sumOf { d.toBase(it.amount, it.currency) ?: 0.0 }
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)) {
+                Text(dayLabel(day), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
+                if (spent > 0) Text("${money(-spent)} ${d.base}", style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
             }
-            items(txs, key = { it.id }) { t -> TxRow(t, d, filter) { onOpen(t) } }
         }
+        items(txs, key = { it.id }) { t -> TxRow(t, d, filter) { onOpen(t) } }
     }
 }
 

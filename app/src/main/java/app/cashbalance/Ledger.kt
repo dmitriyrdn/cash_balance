@@ -5,6 +5,10 @@ import org.json.JSONObject
 import java.math.BigDecimal
 import java.math.MathContext
 import java.math.RoundingMode
+import java.time.Instant
+import java.time.LocalDate
+import java.time.YearMonth
+import java.time.ZoneId
 import java.util.Calendar
 import java.util.TimeZone
 
@@ -75,6 +79,22 @@ data class Data(
     fun shownTxs(): List<Tx> {
         val ids = visible.map { it.id }.toSet()
         return txs.filter { it.account in ids || it.toAccount in ids }
+    }
+
+    /** Visible entries matching the account (either side), local month and spending category. */
+    fun filteredTxs(accountId: Long? = null, month: YearMonth? = null, categoryId: Long? = null): List<Tx> =
+        shownTxs().filter { t ->
+            (accountId == null || t.account == accountId || t.toAccount == accountId) &&
+                (month == null || YearMonth.from(t.localDate()) == month) &&
+                (categoryId == null || (t.type == Type.SPEND && t.category == categoryId))
+        }.sortedWith(compareByDescending<Tx> { it.time }.thenByDescending { it.id })
+
+    /** Start in the selected visible account; repayments may require a particular currency. */
+    fun newEntry(type: Type, accountId: Long? = null, person: String = "", currency: String = ""): Tx? {
+        val candidates = visible.filter { currency.isEmpty() || it.currency == currency }
+        val account = candidates.firstOrNull { it.id == accountId } ?: candidates.firstOrNull() ?: visible.firstOrNull()
+            ?: return null
+        return Tx(0, System.currentTimeMillis(), type, account.id, account.currency, BigDecimal.ZERO, person = person)
     }
 
     /** person -> currency -> amount they still owe you */
@@ -165,6 +185,8 @@ data class Data(
         private fun JSONArray.objects() = (0 until length()).map { getJSONObject(it) }
     }
 }
+
+fun Tx.localDate(): LocalDate = Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).toLocalDate()
 
 /** What [a] holds in its own currency, from [Data.balances]. */
 fun Map<Long, Map<String, BigDecimal>>.of(a: Account): BigDecimal = this[a.id]?.get(a.currency) ?: BigDecimal.ZERO

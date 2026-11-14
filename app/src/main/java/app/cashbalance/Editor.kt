@@ -193,6 +193,7 @@ fun Editor(
                 Modifier.fillMaxWidth().onFocusChanged { typing = if (it.isFocused) typing + "note" else typing - "note" },
                 label = { Text("Note") },
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             )
             Spacer(Modifier.height(4.dp))
         }
