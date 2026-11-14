@@ -157,4 +157,27 @@ class NavigationTest {
         compose.onNodeWithText("Export CSV").assertExists()
         assertEquals(81, Store.data.txs.size)
     }
+    @Test fun csvImportRequiresConfirmationAndRestoresLedger() {
+        val original = Store.data
+        val file = File(compose.activity.cacheDir, "restore.csv")
+        file.writeText(StringWriter().also { original.writeCsv(it) }.toString())
+        compose.runOnIdle { Store.update { it.copy(txs = emptyList()) } }
+        compose.onNodeWithText("Settings").performClick()
+        fun chooseFile() {
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Import CSV"))
+            compose.onNodeWithText("Import CSV").performClick()
+            val activity = shadowOf(compose.activity)
+            val request = activity.nextStartedActivityForResult
+            compose.runOnIdle { activity.receiveResult(request.intent, Activity.RESULT_OK, Intent().setData(Uri.fromFile(file))) }
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("Replace ledger?").fetchSemanticsNodes().isNotEmpty() }
+        }
+        chooseFile()
+        assertEquals(0, Store.data.txs.size)
+        compose.onNodeWithText("Cancel").performClick()
+        assertEquals(0, Store.data.txs.size)
+        chooseFile()
+        compose.onNodeWithText("Replace").performClick()
+        compose.runOnIdle { assertEquals(original, Store.data) }
+    }
+
 }

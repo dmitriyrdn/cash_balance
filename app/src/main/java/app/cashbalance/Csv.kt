@@ -6,7 +6,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /** Export the complete ledger, including hidden accounts, without converting amounts. */
-fun Data.writeCsv(writer: Writer, zone: ZoneId = ZoneId.systemDefault()) {
+fun Data.writeCsv(writer: Writer, zone: ZoneId = ZoneId.systemDefault(), includeSnapshot: Boolean = true) {
     val accountsById = accounts.associateBy { it.id }
     val categoriesById = categories.associateBy { it.id }
     fun row(cells: List<String>) {
@@ -47,6 +47,7 @@ fun Data.writeCsv(writer: Writer, zone: ZoneId = ZoneId.systemDefault()) {
             csvText(tx.note),
         ))
     }
+    if (includeSnapshot) row(listOf("cash_balance_snapshot_v1", java.util.Base64.getEncoder().encodeToString(toJson().toString().toByteArray(Charsets.UTF_8))) + List(15) { "" })
 }
 
 /** Keep user text from being interpreted as spreadsheet formulas. Numeric cells are separate. */

@@ -118,11 +118,12 @@ object Store {
 
     // ponytail: rewrites the whole file on the main thread per change; fine for thousands of entries, move to IO if it ever lags
     fun update(f: (Data) -> Data) {
-        data = f(data)
+        val updated = f(data)
         val out = file.startWrite()
         try {
-            out.write(data.toJson().toString().toByteArray())
+            out.write(updated.toJson().toString().toByteArray())
             file.finishWrite(out)
+            data = updated
         } catch (e: Exception) {
             file.failWrite(out)
             throw e
@@ -171,6 +172,7 @@ fun withoutIcon(name: String) = name.removePrefix(iconOf(name).orEmpty()).trim()
 fun App() {
     val d = Store.data
     val csvExport = rememberCsvExport(d)
+    val csvImport = rememberCsvImport()
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -238,7 +240,7 @@ fun App() {
                     0 -> History(d, loading, activeHistoryAccount, onFilter = { historyAccount = it }, onRefresh = ::refresh, onOpen = { editing = it })
                     1 -> Balances(d, onRepay = { p, c -> new(Type.REPAY, p, c) })
                     2 -> Analytics(d, onOpen = { editing = it })
-                    else -> Settings(d, loading, onRefresh = ::refresh, csvExport = csvExport)
+                    else -> Settings(d, loading, onRefresh = ::refresh, csvExport = csvExport, csvImport = csvImport)
                 }
             }
             AnimatedVisibility(fabOpen && tab < 2, enter = fadeIn(), exit = fadeOut()) {
@@ -503,7 +505,7 @@ fun Balances(d: Data, onRepay: (String, String) -> Unit) {
 }
 
 @Composable
-fun Settings(d: Data, loading: Boolean, onRefresh: () -> Unit, csvExport: CsvExport) {
+fun Settings(d: Data, loading: Boolean, onRefresh: () -> Unit, csvExport: CsvExport, csvImport: () -> Unit) {
     var account by remember { mutableStateOf<Account?>(null) }
     var category by remember { mutableStateOf<Category?>(null) }
     var basePicker by remember { mutableStateOf(false) }
@@ -568,7 +570,8 @@ fun Settings(d: Data, loading: Boolean, onRefresh: () -> Unit, csvExport: CsvExp
                 Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        item { SectionTitle("Export") }
+        item { SectionTitle("Export / Import") }
+        item { ListItem(headlineContent = { Text("Import CSV") }, supportingContent = { Text("Restore a ledger from a Cash Balance CSV") }, modifier = Modifier.clickable(onClick = csvImport)) }
         item {
             ListItem(
                 headlineContent = { Text(if (csvExport.inProgress) "Exporting CSV…" else "Export CSV") },

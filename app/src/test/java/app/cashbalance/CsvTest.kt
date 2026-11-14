@@ -8,7 +8,7 @@ import java.time.ZoneId
 import java.util.Locale
 
 class CsvTest {
-    private fun export(data: Data, zone: ZoneId = ZoneId.of("UTC")) = StringWriter().also { data.writeCsv(it, zone) }.toString()
+    private fun export(data: Data, zone: ZoneId = ZoneId.of("UTC")) = StringWriter().also { data.writeCsv(it, zone, includeSnapshot = false) }.toString()
 
     @Test fun emptyLedgerHasUtf8BomAndHeader() {
         assertEquals(
