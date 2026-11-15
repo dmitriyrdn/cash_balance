@@ -169,15 +169,29 @@ class NavigationTest {
             val activity = shadowOf(compose.activity)
             val request = activity.nextStartedActivityForResult
             compose.runOnIdle { activity.receiveResult(request.intent, Activity.RESULT_OK, Intent().setData(Uri.fromFile(file))) }
-            compose.waitUntil(10_000) { compose.onAllNodesWithText("Replace ledger?").fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("Replace entire ledger").fetchSemanticsNodes().isNotEmpty() }
         }
         chooseFile()
         assertEquals(0, Store.data.txs.size)
         compose.onNodeWithText("Cancel").performClick()
         assertEquals(0, Store.data.txs.size)
         chooseFile()
+        compose.onNodeWithText("Replace entire ledger").performClick()
         compose.onNodeWithText("Replace").performClick()
         compose.runOnIdle { assertEquals(original, Store.data) }
+        chooseFile()
+        compose.onNodeWithText("Add to current ledger").assertIsSelected()
+        compose.onNodeWithText("Add").performClick()
+        compose.runOnIdle { assertEquals(original, Store.data) }
+    }
+
+    @Test fun spendingFromEmptyAccountCanCreateNegativeBalance() {
+        compose.onNodeWithContentDescription("Add").performClick()
+        compose.onNodeWithText("💸  Spend").performClick()
+        compose.onNodeWithText("1").performClick()
+        compose.onNodeWithText("0").performClick()
+        compose.onNodeWithText("Save").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(BigDecimal("-10.00"), Store.data.balances()[1L]!!["USD"]) }
     }
 
 }

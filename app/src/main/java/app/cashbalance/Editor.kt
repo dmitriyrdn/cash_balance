@@ -79,7 +79,6 @@ fun Editor(
     LaunchedEffect(targets) { if (targets.none { it.id == toAccount }) toAccount = targets.firstOrNull()?.id ?: 0L }
     val to = targets.firstOrNull { it.id == toAccount }
     val toCurrency = to?.currency.orEmpty()
-    val held = bal.of(acc)
     val owed = loans[person.trim()]?.get(currency) ?: BigDecimal.ZERO
     val amount = calc(expr)
     val toAmount = calc(toExpr)
@@ -89,7 +88,6 @@ fun Editor(
         (type == Type.MOVE || type == Type.EXCHANGE) && to == null -> "Pick an account to put it in"
         type == Type.EXCHANGE && (toAmount == null || toAmount.signum() <= 0) -> "Enter how much you got"
         (type == Type.LEND || type == Type.REPAY) && person.isBlank() -> "Enter a name"
-        type in setOf(Type.SPEND, Type.MOVE, Type.EXCHANGE, Type.LEND) && amount > held -> "Only ${money(held)} $currency in ${acc.name}"
         type == Type.REPAY && amount > owed -> "${person.trim()} owes ${money(owed)} $currency"
         else -> null
     }
