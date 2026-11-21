@@ -30,7 +30,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
-fun Analytics(d: Data, onOpen: (Tx) -> Unit) {
+fun Analytics(d: Data, onOpen: (Tx) -> Unit, onRepay: (String, String) -> Unit) {
     val cs = MaterialTheme.colorScheme
     // Save a string because YearMonth is not a Bundle-supported value.
     var savedMonth by rememberSaveable { mutableStateOf<String?>(YearMonth.now().toString()) }
@@ -117,7 +117,41 @@ fun Analytics(d: Data, onOpen: (Tx) -> Unit) {
         }
 
         ExchangeRates(d, inPeriod)
+        OutstandingLoans(d, onRepay)
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun OutstandingLoans(d: Data, onRepay: (String, String) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val loans = remember(d.txs) { d.loans() }
+    Text("Outstanding loans", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleSmall, color = cs.primary)
+    if (loans.isEmpty()) {
+        Text("Nobody owes you cash", color = cs.onSurfaceVariant)
+    }
+    loans.forEach { (person, amounts) ->
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(cs.surfaceContainer)
+                .clickable(onClickLabel = "Record a repayment") { onRepay(person, amounts.keys.first()) }
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row {
+                Text(person, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Text("${money(d.sumBase(amounts))} ${d.base}", color = cs.primary, fontWeight = FontWeight.SemiBold)
+            }
+            amounts.forEach { (currency, amount) ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(currency, Modifier.width(52.dp), color = cs.onSurfaceVariant)
+                    Text(money(amount), Modifier.weight(1f), color = if (amount.signum() < 0) cs.error else cs.onSurface)
+                    if (currency != d.base) d.toBase(amount, currency)?.let {
+                        Text("≈ ${money(it)}", color = cs.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+            Text("Tap to record a repayment", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+        }
     }
 }
 

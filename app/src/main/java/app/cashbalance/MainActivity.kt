@@ -28,7 +28,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Refresh
@@ -222,7 +221,6 @@ fun App() {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
                 listOf(
                     "History" to Icons.AutoMirrored.Filled.List,
-                    "Balances" to Icons.Filled.AccountBalanceWallet,
                     "Analytics" to Icons.Filled.BarChart,
                     "Settings" to Icons.Filled.Settings,
                 ).forEachIndexed { i, (label, icon) ->
@@ -231,19 +229,18 @@ fun App() {
             }
         },
         floatingActionButton = {
-            if (tab < 2 && d.visible.isNotEmpty()) AddFab(fabOpen, { fabOpen = it }) { new(it) }
+            if (tab == 0 && d.visible.isNotEmpty()) AddFab(fabOpen, { fabOpen = it }) { new(it) }
         },
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             screenState.SaveableStateProvider(tab) {
                 when (tab) {
                     0 -> History(d, loading, activeHistoryAccount, onFilter = { historyAccount = it }, onRefresh = ::refresh, onOpen = { editing = it })
-                    1 -> Balances(d, onRepay = { p, c -> new(Type.REPAY, p, c) })
-                    2 -> Analytics(d, onOpen = { editing = it })
+                    1 -> Analytics(d, onOpen = { editing = it }, onRepay = { person, currency -> new(Type.REPAY, person, currency) })
                     else -> Settings(d, loading, onRefresh = ::refresh, csvExport = csvExport, csvImport = csvImport)
                 }
             }
-            AnimatedVisibility(fabOpen && tab < 2, enter = fadeIn(), exit = fadeOut()) {
+            AnimatedVisibility(fabOpen && tab == 0, enter = fadeIn(), exit = fadeOut()) {
                 Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable { fabOpen = false })
             }
         }
@@ -362,7 +359,14 @@ fun History(d: Data, loading: Boolean, filter: Long?, onFilter: (Long?) -> Unit,
                             Spacer(Modifier.width(6.dp))
                             Text(a.name, color = Color.White, style = MaterialTheme.typography.labelLarge)
                             Spacer(Modifier.width(6.dp))
-                            Text("${money(bal.of(a))} ${a.currency}", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelLarge)
+                            Column {
+                                Text("${money(bal.of(a))} ${a.currency}", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelLarge)
+                                bal[a.id].orEmpty().forEach { (currency, amount) ->
+                                    if (currency != a.currency) {
+                                        Text("${money(amount)} $currency", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelLarge)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -446,62 +450,6 @@ fun SectionTitle(text: String) {
         text, Modifier.padding(start = 16.dp, top = 20.dp, bottom = 4.dp),
         style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
     )
-}
-
-@Composable
-private fun Block(title: String, color: Int?, total: String, onClick: (() -> Unit)?, content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainer)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(16.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            color?.let { Dot(it, 12); Spacer(Modifier.width(10.dp)) }
-            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-            Text(total, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-        }
-        Spacer(Modifier.height(6.dp))
-        content()
-    }
-}
-
-@Composable
-private fun AmountRow(cur: String, v: BigDecimal, d: Data) {
-    val cs = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(cur, Modifier.width(52.dp), color = cs.onSurfaceVariant)
-        Text(money(v), Modifier.weight(1f), color = if (v.signum() < 0) cs.error else cs.onSurface)
-        if (cur != d.base) d.toBase(v, cur)?.let { Text("≈ ${money(it)}", color = cs.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
-    }
-}
-
-@Composable
-fun Balances(d: Data, onRepay: (String, String) -> Unit) {
-    val bal = remember(d.txs) { d.balances() }
-    val loans = remember(d.txs) { d.loans() }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp)) {
-        item { SectionTitle("Accounts") }
-        items(d.visible, key = { "a${it.id}" }) { a ->
-            val v = bal.of(a)
-            Block(a.name, a.color, "${money(v)} ${a.currency}", null) {
-                if (a.currency != d.base) d.toBase(v, a.currency)?.let {
-                    Text("≈ ${money(it)} ${d.base}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                }
-                // only entries from before one-currency accounts can leave other currencies here
-                bal[a.id].orEmpty().filterKeys { it != a.currency }.forEach { (cur, x) -> AmountRow(cur, x, d) }
-            }
-        }
-        item { SectionTitle("Lent") }
-        if (loans.isEmpty()) item {
-            Text("Nobody owes you cash", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        items(loans.entries.toList(), key = { "p${it.key}" }) { (person, m) ->
-            Block(person, null, "${money(d.sumBase(m))} ${d.base}", { onRepay(person, m.keys.first()) }) {
-                m.forEach { (cur, v) -> AmountRow(cur, v, d) }
-                Text("Tap to record a repayment", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
 }
 
 @Composable
